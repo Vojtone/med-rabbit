@@ -9,12 +9,25 @@ const readline = require('readline').createInterface({
 
 amqp.connect('amqp://localhost', function(err, conn) {
     conn.createChannel(function(err, ch) {
-        // var exchangeName = 'examinations';
+        const exchangeLogs = 'logs';
+        const exchangeInfo = 'info';
+
+        ch.assertExchange(exchangeInfo, 'fanout', {durable: false});
+        ch.assertQueue('', {exclusive: true}, function(err, q) {
+            console.log(" [*] Waiting for messages from admin in %s. To exit press CTRL+C", q.queue);
+            ch.bindQueue(q.queue, exchangeInfo, '');
+
+            ch.consume(q.queue, function(msg) {
+                if(msg.content) {
+                    console.log(" [x] Info from admin: %s", msg.content.toString());
+                }
+            }, {noAck: true});
+        });
 
         ask();
         function ask() {
             readline.question('Give type of examination (knee / hip / elbow)' +
-                ' and surname of patient or type exit to quit\n', function(msg){
+                " and surname of patient or type 'exit' to quit\n", function(msg){
 
                 if (msg === 'exit') handleExit(0);
 
@@ -28,21 +41,30 @@ amqp.connect('amqp://localhost', function(err, conn) {
 
                         ch.consume(q.queue, function(msg) {
                             if (msg.properties.correlationId === corr)
-                                console.log(' [.] Got %s', msg.content.toString());
+                                console.log(" [.] Got '%s'", msg.content.toString());
                         }, {noAck: true});
 
                         ch.sendToQueue(examType, new Buffer(msg),
                             { correlationId: corr, replyTo: q.queue });
                         console.log(" [x] Sent %s: '%s'", examType, msg);
+
+                        // Logs
+                        ch.assertExchange(exchangeLogs, 'fanout', {durable: false});
+                        ch.publish(exchangeLogs, '', new Buffer(msg));
+
                         ask();
                     });
-                    // ch.sendToQueue(examType, Buffer.from(msg));
-                    // console.log(" [x] Sent %s: '%s'", examType, msg);
                 } else
                     console.log("Wrong input.");
             });
         }
     });
+
+    function generateUuid() {
+        return Math.random().toString() +
+            Math.random().toString() +
+            Math.random().toString();
+    }
 
     process.on('SIGINT', handleExit);
     function handleExit() {
@@ -50,12 +72,6 @@ amqp.connect('amqp://localhost', function(err, conn) {
         readline.close();
         console.log('\nExiting');
         process.exit(0);
-    }
-
-    function generateUuid() {
-        return Math.random().toString() +
-            Math.random().toString() +
-            Math.random().toString();
     }
 });
 
