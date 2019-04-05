@@ -1,36 +1,34 @@
 #!/usr/bin/env node
 
-var amqp = require('amqplib/callback_api');
-
+const amqp = require('amqplib/callback_api');
+const config = require('./config');
+const sharedRMQ = require('./sharedRMQ');
 const readline = require('readline').createInterface({
     input: process.stdin,
     output: process.stdout
 });
 
-amqp.connect('amqp://localhost', function(err, conn) {
+amqp.connect(config.url, function(err, conn) {
     conn.createChannel(function(err, ch) {
-        const exchangeLogs = 'logs';
-        const exchangeInfo = 'info';
+        const exchangeLogs = config.exchangeLogs;
+        const exchangeInfo = config.exchangeInfo;
 
-        ask();
-        function ask() {
-            readline.question('Type info and hit enter to send it to everyone.\n', function(msg){
-                ch.assertExchange(exchangeInfo, 'fanout', {durable: false});
-                ch.publish(exchangeInfo, '', new Buffer(msg));
-                ask();
+        sharedRMQ.subscribeRMQ(ch, exchangeLogs);
+        broadcastInfo();
+
+        function broadcastInfo() {
+            readline.question('[*] Type info and hit enter to send it to everyone.\n', function(msg) {
+                sharedRMQ.publishRMQ(ch, exchangeInfo, msg);
+                broadcastInfo();
             });
         }
-
-        ch.assertExchange(exchangeLogs, 'fanout', {durable: false});
-        ch.assertQueue('', {exclusive: true}, function(err, q) {
-            console.log(" [*] Waiting for logs in %s. To exit press CTRL+C", q.queue);
-            ch.bindQueue(q.queue, exchangeLogs, '');
-
-            ch.consume(q.queue, function(msg) {
-                if(msg.content) {
-                    console.log(" [x] %s", msg.content.toString());
-                }
-            }, {noAck: true});
-        });
     });
+
+    process.on('SIGINT', handleExit);
+    function handleExit() {
+        conn.close();
+        readline.close();
+        console.log('\nExiting');
+        process.exit(0);
+    }
 });
